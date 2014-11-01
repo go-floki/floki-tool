@@ -15,13 +15,14 @@ package services
 
 import (
 	"models"
+	"github.com/go-floki/db"
 {{.Imports | formatImports}}
 )
 
 {{$lowName := .Name | decapitalize}}
 {{$mName := printf "%sService" $lowName}}{{if symbolExists .Symbols $mName}}
 type {{.Name | decapitalize}}Service struct {
-    basicCRUD
+    db.BasicCRUD
 }
 
 var {{.Name | capitalize}}Service = {{.Name | decapitalize}}Service{}
