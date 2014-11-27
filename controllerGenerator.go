@@ -17,28 +17,34 @@ package controllers
 
 import (
 	"github.com/go-floki/floki"
+{{if .IncludeFilestorage}}
+	"bitbucket.org/stealthtm/filestorage"
+	"mime/multipart"
+{{end}}
 	"models"
 	"services"
 	"strconv"
 )
 
+// in case update/create functions are defined elsewhere
+
 var {{$service}} = services.{{.Name}}Service
 
-func init{{.Name | capitalize}}Api(m *floki.Floki) {
+func init{{.Name | capitalize}}Api(m *floki.RouterGroup) {
 	{{$mName := printf "%sApiList" $lowName}}{{if symbolExists .Symbols $mName}}
-	m.GET("/api/{{$lowName}}", {{$lowName}}ApiList)
+	m.GET("/{{$lowName}}", {{$lowName}}ApiList)
 	{{end}}
 	{{$mName := printf "%sApiGet" $lowName}}{{if symbolExists .Symbols $mName}}
-	m.GET("/api/{{$lowName}}/:id", {{$lowName}}ApiGet)
+	m.GET("/{{$lowName}}/:id", {{$lowName}}ApiGet)
 	{{end}}
 	{{$mName := printf "%sApiCreate" $lowName}}{{if symbolExists .Symbols $mName}}
-	m.PUT("/api/{{$lowName}}", {{$lowName}}ApiCreate)
+	m.PUT("/{{$lowName}}", {{$lowName}}ApiCreate)
 	{{end}}
 	{{$mName := printf "%sApiUpdate" $lowName}}{{if symbolExists .Symbols $mName}}
-	m.PUT("/api/{{$lowName}}/:id", {{$lowName}}ApiUpdate)
+	m.PUT("/{{$lowName}}/:id", {{$lowName}}ApiUpdate)
 	{{end}}
 	{{$mName := printf "%sApiDelete" $lowName}}{{if symbolExists .Symbols $mName}}
-	m.DELETE("/api/{{$lowName}}/:id", {{$lowName}}ApiDelete)
+	m.DELETE("/{{$lowName}}/:id", {{$lowName}}ApiDelete)
 	{{end}}
 }
 
@@ -53,6 +59,11 @@ func {{$mName}}(c *floki.Context) {
 	if err != nil {
 		c.Send(404, "Invalid id")
 		return
+	}
+
+	// fix dates
+	for _, entity := range entities {
+		{{$service}}.FixDatesInEntity(entity)
 	}
 
 	c.SendJson(200, floki.Model{
@@ -74,6 +85,7 @@ func {{$mName}}(c *floki.Context) {
     }
 
     {{$service}}.Get(int64(id), &entity)
+    {{$service}}.FixDatesInEntity(&entity)
 
     c.SendJson(200, entity)
 }
@@ -99,6 +111,11 @@ func {{$mName}}(c *floki.Context) {
 
     {{$service}}.FromForm(&entity, form)
 
+    fileStore := fileStorage.DateBasedFilePlacer{c.Floki.Config.Str("imagesDir", "") + "/upload/"}
+	{{$service}}.UploadFiles(&entity, c.Request, func(field string, file multipart.File, fileHeader *multipart.FileHeader) (string, string) {
+		return fileStore.RootDir, fileStore.AllocateForFileShort(fileHeader.Filename)
+	})
+
     _, err = {{$service}}.Save(&entity)
     if err != nil {
         log.Println(err)
@@ -123,6 +140,11 @@ func {{$mName}}(c *floki.Context) {
     form := c.Request.Form
 
     {{$service}}.FromForm(&entity, form)
+
+    fileStore := fileStorage.DateBasedFilePlacer{c.Floki.Config.Str("imagesDir", "") + "/upload/"}
+	{{$service}}.UploadFiles(&entity, c.Request, func(field string, file multipart.File, fileHeader *multipart.FileHeader) (string, string) {
+		return fileStore.RootDir, fileStore.AllocateForFileShort(fileHeader.Filename)
+	})
 
     _, err := {{$service}}.Create(&entity)
     if err != nil {
@@ -166,6 +188,15 @@ func RemoveControllerFiles(dir string, models map[string]*Model) {
 	}
 }
 
+func symbolExists(symbols map[string]string, symbol string) bool {
+	_, ok := symbols[symbol]
+	if ok {
+		return false
+	}
+
+	return true
+}
+
 func GenerateControllers(dir string, models map[string]*Model, existingSymbols map[string]string) {
 	funcMap := template.FuncMap{
 		"capitalize": func(a interface{}) interface{} {
@@ -193,14 +224,7 @@ func GenerateControllers(dir string, models map[string]*Model, existingSymbols m
 			}
 		},
 
-		"symbolExists": func(symbols map[string]string, symbol string) bool {
-			_, ok := symbols[symbol]
-			if ok {
-				return false
-			}
-
-			return true
-		},
+		"symbolExists": symbolExists,
 	}
 
 	headerTpl, _ := template.New("header").Funcs(funcMap).Parse(controllerHeader)
@@ -254,8 +278,12 @@ func (g ControllerGenerator) addFinder(modelName string, field *Field) {
 */
 
 func (g ControllerGenerator) writeHeader(name string, existingSymbols map[string]string) {
+	// check if filestorage must be imported
+	nameL := strings.ToLower(name)
+
 	g.headerTpl.Execute(g.writer, ModuleParams{
-		Name:    name,
-		Symbols: existingSymbols,
+		Name:               name,
+		Symbols:            existingSymbols,
+		IncludeFilestorage: symbolExists(existingSymbols, nameL+"ApiCreate") && symbolExists(existingSymbols, nameL+"ApiUpdate"),
 	})
 }
